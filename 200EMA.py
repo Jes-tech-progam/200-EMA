@@ -4,8 +4,8 @@ import pandas as pd
 import ta
 from datetime import datetime, timedelta
 
-API_KEY = os.getenv("ALPACA_API_KEY")
-SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+API_KEY = os.getenv("PK3G4SC4I6SBEKMU5JLUVKXU6C")
+SECRET_KEY = os.getenv("idtE7hQsP8beoxw6RvPi5vJ7XFaVxP2ZBKLZ49JbSCo")
 BASE_URL = "https://paper-api.alpaca.markets"
 
 api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL)
