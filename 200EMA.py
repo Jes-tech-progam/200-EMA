@@ -2,41 +2,49 @@ import os
 import alpaca_trade_api as tradeapi
 import pandas as pd
 import ta
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-# ✅ CORRECT ENV VARIABLES (Alpaca standard)
+# =========================
+# 🔐 ALPACA AUTH (Railway safe)
+# =========================
 API_KEY = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
 BASE_URL = "https://paper-api.alpaca.markets"
 
-# Safety check
 if not API_KEY or not SECRET_KEY:
-    raise ValueError("Missing Alpaca API keys. Check Railway environment variables.")
+    raise ValueError("Missing Alpaca API keys (APCA_API_KEY_ID / APCA_API_SECRET_KEY)")
 
 api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL)
 
+# =========================
 # ⚙️ SETTINGS
+# =========================
 TIMEFRAME = "1Week"
 EMA_PERIOD = 200
-MAX_TRADES = 3  # limit number of buys per run
+MAX_TRADES = 3
 
-# 📊 STOCK LIST (expand later if needed)
 SYMBOLS = [
     "AAPL","MSFT","NVDA","AMZN","GOOGL",
     "META","TSLA","AVGO","LLY","BRK.B"
 ]
 
-# 📥 Fetch data
+# =========================
+# 📥 GET DATA (FIXED RFC3339)
+# =========================
 def get_data(symbol):
     try:
-        end = datetime.utcnow()
+        end = datetime.now(timezone.utc)
         start = end - timedelta(weeks=300)
+
+        # FIX: Alpaca-safe format (no microseconds)
+        end = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+        start = start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         df = api.get_bars(
             symbol,
             TIMEFRAME,
-            start.isoformat(),
-            end.isoformat()
+            start,
+            end
         ).df
 
         return df
@@ -45,12 +53,16 @@ def get_data(symbol):
         print(f"❌ Error fetching {symbol}: {e}")
         return None
 
-# 📈 Add EMA
+# =========================
+# 📈 EMA CALC
+# =========================
 def add_ema(df):
-    df['ema'] = ta.trend.ema_indicator(df['close'], window=EMA_PERIOD)
+    df["ema"] = ta.trend.ema_indicator(df["close"], window=EMA_PERIOD)
     return df
 
-# 🔍 Strategy logic
+# =========================
+# 🔍 STRATEGY LOGIC
+# =========================
 def check_signal(df):
     df = df.dropna()
 
@@ -60,53 +72,56 @@ def check_signal(df):
     prev = df.iloc[-2]
     curr = df.iloc[-1]
 
-    # ✅ EMA pullback + bounce
+    # EMA pullback + bounce strategy
     if (
-        prev['close'] > prev['ema'] and
-        curr['low'] <= curr['ema'] and
-        curr['close'] > curr['ema'] and
-        curr['ema'] > df.iloc[-10]['ema']  # EMA trending up
+        prev["close"] > prev["ema"] and      # uptrend
+        curr["low"] <= curr["ema"] and       # touch EMA
+        curr["close"] > curr["ema"] and      # bounce
+        curr["ema"] > df.iloc[-10]["ema"]    # EMA rising
     ):
-        # score = strength of bounce
-        score = (curr['close'] - curr['ema']) / curr['ema']
+        score = (curr["close"] - curr["ema"]) / curr["ema"]
         return True, score
 
     return False, 0
 
-# 💼 Check if already holding
+# =========================
+# 💼 POSITION CHECK
+# =========================
 def already_in_position(symbol):
     try:
         positions = api.list_positions()
-        for pos in positions:
-            if pos.symbol == symbol:
-                return True
+        return any(pos.symbol == symbol for pos in positions)
     except:
-        pass
-    return False
+        return False
 
-# 💰 Execute trade
+# =========================
+# 🚀 PLACE ORDER
+# =========================
 def place_order(symbol):
     if already_in_position(symbol):
         print(f"⚠️ Already holding {symbol}")
         return False
 
     try:
-        print(f"🚀 BUY: {symbol}")
+        print(f"🚀 BUY SIGNAL: {symbol}")
         api.submit_order(
             symbol=symbol,
             qty=1,
-            side='buy',
-            type='market',
-            time_in_force='gtc'
+            side="buy",
+            type="market",
+            time_in_force="gtc"
         )
         return True
+
     except Exception as e:
-        print(f"❌ Order failed for {symbol}: {e}")
+        print(f"❌ Order failed {symbol}: {e}")
         return False
 
-# 🔎 Main scanner
+# =========================
+# 🔎 SCANNER
+# =========================
 def run_scanner():
-    print("🔍 Scanning market...\n")
+    print("\n🔍 Scanning market...\n")
 
     signals = []
 
@@ -116,23 +131,22 @@ def run_scanner():
             continue
 
         df = add_ema(df)
-
         signal, score = check_signal(df)
 
         if signal:
-            print(f"✅ Signal: {symbol} | Score: {round(score,4)}")
+            print(f"✅ SIGNAL: {symbol} | Score: {round(score,4)}")
             signals.append((symbol, score))
         else:
             print(f"No setup: {symbol}")
 
-    # 🔥 Sort best setups
+    # Sort best setups first
     signals.sort(key=lambda x: x[1], reverse=True)
 
     print("\n🏆 Top setups:")
     for s in signals:
         print(s)
 
-    # 🚀 Execute top trades
+    # Execute trades (top ones only)
     trades = 0
     for symbol, score in signals:
         if trades >= MAX_TRADES:
@@ -143,6 +157,8 @@ def run_scanner():
 
     print(f"\n✅ Trades executed: {trades}")
 
-# ▶️ Run bot
+# =========================
+# ▶️ RUN
+# =========================
 if __name__ == "__main__":
     run_scanner()
